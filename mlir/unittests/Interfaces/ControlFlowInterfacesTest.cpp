@@ -132,12 +132,46 @@ struct SequentialRegionsOp
       SequentialRegionsOp>::getSuccessorRegions;
 };
 
+/// Region 0 is entered from the parent op and branches to region 1, which
+/// branches back to the parent op. With the `loop` attribute, region 1 also
+/// branches to itself.
+struct EntryRegionsOp
+    : public Op<EntryRegionsOp, RegionBranchOpInterface::Trait> {
+  using Op::Op;
+  static ArrayRef<StringRef> getAttributeNames() { return {}; }
+
+  static StringRef getOperationName() { return "cftest.entry_regions_op"; }
+
+  void getSuccessorRegions(RegionBranchPoint point,
+                           SmallVectorImpl<RegionSuccessor> &regions) {
+    if (point.isParent()) {
+      regions.push_back(RegionSuccessor(&(*this)->getRegion(0)));
+      return;
+    }
+    if (point.getTerminatorPredecessorOrNull()->getParentRegion() ==
+        &(*this)->getRegion(0)) {
+      regions.push_back(RegionSuccessor(&(*this)->getRegion(1)));
+      return;
+    }
+    if ((*this)->hasAttr("loop"))
+      regions.push_back(RegionSuccessor(&(*this)->getRegion(1)));
+    regions.push_back(RegionSuccessor(getOperation()));
+  }
+
+  ValueRange getSuccessorInputs(RegionSuccessor successor) {
+    return successor.isOperation() ? ValueRange(getOperation()->getResults())
+                                   : ValueRange();
+  }
+
+  using RegionBranchOpInterface::Trait<EntryRegionsOp>::getSuccessorRegions;
+};
+
 /// A dialect putting all the above together.
 struct CFTestDialect : Dialect {
   explicit CFTestDialect(MLIRContext *ctx)
       : Dialect(getDialectNamespace(), ctx, TypeID::get<CFTestDialect>()) {
     addOperations<DummyOp, MutuallyExclusiveRegionsOp, LoopRegionsOp,
-                  DoubleLoopRegionsOp, SequentialRegionsOp>();
+                  DoubleLoopRegionsOp, SequentialRegionsOp, EntryRegionsOp>();
   }
   static StringRef getDialectNamespace() { return "cftest"; }
 };
@@ -283,4 +317,54 @@ TEST(RegionBranchOpInterface, NotRecursiveRegions) {
 
   EXPECT_EQ(getEnclosingRepetitiveRegion(op1), nullptr);
   EXPECT_EQ(getEnclosingRepetitiveRegion(op2), nullptr);
+}
+
+TEST(RegionBranchOpInterface, MultipleExitsToSameRegionIsNotALoop) {
+  // Both terminators of region 0 branch to region 1. Region 1 is reached
+  // twice, but the region graph has no cycle.
+  const char *ir = R"MLIR(
+"cftest.entry_regions_op"() (
+      {
+        "cftest.dummy_op"() : () -> ()
+      ^bb1:
+        "cftest.dummy_op"() : () -> ()
+      },
+      {"cftest.dummy_op"() : () -> ()}
+  ) : () -> ()
+  )MLIR";
+
+  DialectRegistry registry;
+  registry.insert<CFTestDialect>();
+  MLIRContext ctx(registry);
+
+  OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(ir, &ctx);
+  ASSERT_TRUE(module);
+  auto regionOp = cast<RegionBranchOpInterface>(
+      &module->getBody()->getOperations().front());
+
+  EXPECT_FALSE(regionOp.isRepetitiveRegion(0));
+  EXPECT_FALSE(regionOp.isRepetitiveRegion(1));
+  EXPECT_FALSE(regionOp.hasLoop());
+}
+
+TEST(RegionBranchOpInterface, LoopAfterEntryRegion) {
+  const char *ir = R"MLIR(
+"cftest.entry_regions_op"() (
+      {"cftest.dummy_op"() : () -> ()},
+      {"cftest.dummy_op"() : () -> ()}
+  ) {loop} : () -> ()
+  )MLIR";
+
+  DialectRegistry registry;
+  registry.insert<CFTestDialect>();
+  MLIRContext ctx(registry);
+
+  OwningOpRef<ModuleOp> module = parseSourceString<ModuleOp>(ir, &ctx);
+  ASSERT_TRUE(module);
+  auto regionOp = cast<RegionBranchOpInterface>(
+      &module->getBody()->getOperations().front());
+
+  EXPECT_FALSE(regionOp.isRepetitiveRegion(0));
+  EXPECT_TRUE(regionOp.isRepetitiveRegion(1));
+  EXPECT_TRUE(regionOp.hasLoop());
 }
