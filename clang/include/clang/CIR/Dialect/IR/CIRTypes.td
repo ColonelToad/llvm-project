@@ -470,6 +470,8 @@ def CIR_ArrayType : CIR_Type<"Array", "array", [
     `<` $elementType `x` $size `>`
   }];
 
+  let genVerifyDecl = 1;
+
   let extraClassDefinition = [{
     bool $cppClass::isSized() const {
       return ::cir::isSized(getElementType());
