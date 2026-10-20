@@ -39,6 +39,9 @@
 !rec_AtomicWrapper = !cir.struct<{data !rec_S1, pad !cir.array<!s8i x 2>}>
 !rec_HoldsAllPad = !cir.struct<"HoldsAllPad" {data !s32i, empty !rec_E}>
 !rec_Incomplete = !cir.struct<"Incomplete" incomplete>
+!rec_UIncompletePad = !cir.union<"UIncompletePad" {data !s32i}, padding = {!rec_Incomplete}>
+!rec_UScalablePad =
+    !cir.union<"UScalablePad" {data !s32i}, padding = {!cir.vector<[4] x !s32i>}>
 
 module attributes {
   dlti.dl_spec = #dlti.dl_spec<
@@ -175,4 +178,18 @@ module attributes {
   }
 
   // CHECK: not yet implemented for type '!cir.struct<"Incomplete" incomplete>'
+
+  // A union's tail padding counts toward its size, so a padding type with no
+  // size the eightbyte rules can read is refused like a member would be.
+  cir.func @take_incomplete_padding(%arg0: !rec_UIncompletePad) {
+    cir.return
+  }
+
+  // CHECK: not yet implemented for type '!cir.union<"UIncompletePad"
+
+  cir.func @take_scalable_padding(%arg0: !rec_UScalablePad) {
+    cir.return
+  }
+
+  // CHECK: not yet implemented for type '!cir.union<"UScalablePad"
 }

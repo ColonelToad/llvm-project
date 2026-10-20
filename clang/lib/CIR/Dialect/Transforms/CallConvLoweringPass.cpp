@@ -163,10 +163,11 @@ static bool hasIncompleteRecordByValue(mlir::Type ty) {
 /// The CIR types the x86_64 bridge handles.  Scalars: an integer up to 128
 /// bits (including `__int128`), a `_BitInt` of any width, pointer, vtable
 /// pointer, bool, void, or any floating-point type.  Aggregates: a complete
-/// struct or union whose members are all themselves supported, or an array
-/// of a supported element type.  Also a `_Complex`, or a fixed-width vector,
-/// of a supported element type.  Everything else is reported NYI at the
-/// reject() choke point in classifyX86_64Function.
+/// struct or union whose members, and a union's tail padding, are all
+/// themselves supported, or an array of a supported element type.  Also a
+/// `_Complex`, or a fixed-width vector, of a supported element type.
+/// Everything else is reported NYI at the reject() choke point in
+/// classifyX86_64Function.
 static bool isSupportedType(mlir::Type ty, const DataLayout &dl) {
   // A pointer is only handled in the default address space (null) or an
   // already-lowered target address space.  A LangAddressSpaceAttr must be
@@ -240,6 +241,12 @@ static bool isSupportedType(mlir::Type ty, const DataLayout &dl) {
     if (!llvm::all_of(recTy.getMembers(),
                       [&](mlir::Type m) { return isSupportedType(m, dl); }))
       return false;
+    // A union's tail padding is not a variant, but it counts toward the union's
+    // size, so it is checked like one.
+    if (auto unionTy = dyn_cast<cir::UnionType>(ty))
+      if (mlir::Type padding = unionTy.getPadding();
+          padding && !isSupportedType(padding, dl))
+        return false;
     if (recTy.isUnion()) {
       llvm::ArrayRef<mlir::Type> members = recTy.getMembers();
       uint64_t recordBits = dl.getTypeSizeInBits(recTy).getFixedValue();
