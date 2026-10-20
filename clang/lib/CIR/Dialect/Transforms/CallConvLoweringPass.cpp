@@ -310,10 +310,11 @@ static mlir::Type abiTypeToCIR(const llvm::abi::Type *ty, MLIRContext *ctx) {
         return cir::getFloatingPointType(*fltTy->getSemantics(), ctx);
       })
       .Case([&](const llvm::abi::PointerType *ptrTy) {
-        mlir::ptr::MemorySpaceAttrInterface addrSpace;
+        auto voidTy = cir::VoidType::get(ctx);
         if (unsigned as = ptrTy->getAddrSpace())
-          addrSpace = cir::TargetAddressSpaceAttr::get(ctx, as);
-        return cir::PointerType::get(cir::VoidType::get(ctx), addrSpace);
+          return cir::PointerType::get(
+              voidTy, cir::TargetAddressSpaceAttr::get(ctx, as));
+        return cir::PointerType::get(voidTy);
       })
       .Case([&](const llvm::abi::VectorType *vecTy) -> mlir::Type {
         mlir::Type elemCIR = abiTypeToCIR(vecTy->getElementType(), ctx);
